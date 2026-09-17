@@ -166,13 +166,12 @@ func (p *ProviderMetadata) CostUSD() float64 {
 
 // Reader incrementally decodes an NDJSON event stream.
 type Reader struct {
-	br *bufio.Reader
+	br  *bufio.Reader
+	err error // returned after any complete event read alongside it
 }
 
-// NewReader wraps an upstream response body. bufio.Scanner is deliberately
-// avoided: it caps a single token at 4 MiB, and start-step events embed the
-// whole forwarded request on one line, which exceeds that cap as a
-// conversation grows.
+// NewReader wraps an upstream response body. ReadString has no per-line
+// size limit: start-step events can echo multi-megabyte image requests.
 func NewReader(r io.Reader) *Reader {
 	return &Reader{br: bufio.NewReaderSize(r, 64*1024)}
 }
@@ -181,10 +180,13 @@ func NewReader(r io.Reader) *Reader {
 // Blank lines and [DONE] sentinels are skipped.
 func (r *Reader) Next() (*Event, error) {
 	for {
-		line, err := r.readLine()
-		if err != nil {
-			return nil, err
+		if r.err != nil {
+			return nil, r.err
 		}
+		line, err := r.br.ReadString('\n')
+		// A reader may return data and an error together. Decode any complete
+		// final event before exposing the terminal error on the next call.
+		r.err = err
 		line = strings.TrimSpace(line)
 		if line == "" || line == "[DONE]" || strings.HasPrefix(line, ":") {
 			continue
@@ -198,30 +200,6 @@ func (r *Reader) Next() (*Event, error) {
 		}
 		ev.Raw = json.RawMessage(line)
 		return &ev, nil
-	}
-}
-
-// readLine returns the next newline-terminated line, without the delimiter.
-// Unlike bufio.Scanner it imposes no size limit on a single line.
-func (r *Reader) readLine() (string, error) {
-	var buf []byte
-	for {
-		chunk, err := r.br.ReadSlice('\n')
-		if err == bufio.ErrBufferFull {
-			buf = append(buf, chunk...)
-			continue
-		}
-		if err != nil {
-			if err == io.EOF {
-				if len(buf) == 0 && len(chunk) == 0 {
-					return "", io.EOF
-				}
-				// Final line without a trailing newline is valid NDJSON.
-				return string(append(buf, chunk...)), nil
-			}
-			return "", err
-		}
-		return string(append(buf, chunk...)), nil
 	}
 }
 
