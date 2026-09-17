@@ -195,6 +195,34 @@ func TestChatCompletionsNonStream(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsHugeStartStep reproduces the multi-image failure: the
+// upstream start-step event echoes the whole forwarded request (base64 image
+// data URLs), whose single NDJSON line can exceed the old 4 MiB scanner cap.
+func TestChatCompletionsHugeStartStep(t *testing.T) {
+	for _, streamed := range []bool{false, true} {
+		huge := strings.Repeat("A", 5*1024*1024)
+		ndjson := `{"type":"start-step","request":{"body":{"padding":"` + huge + `"}}}` + "\n" +
+			`{"type":"text-delta","text":"ok"}` + "\n" +
+			`{"type":"finish","finishReason":"stop","totalUsage":{"inputTokens":5,"outputTokens":2}}` + "\n"
+
+		h := New(testConfig(), Deps{Upstream: &stubUpstream{ndjson: ndjson}}, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authedReq(t, "POST", "/v1/chat/completions",
+			fmt.Sprintf(`{"model":"m","stream":%t,"messages":[{"role":"user","content":"hi"}]}`, streamed)))
+
+		if rec.Code != 200 {
+			t.Fatalf("stream=%t status=%d body=%s", streamed, rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "ok") {
+			t.Fatalf("stream=%t missing content: %s", streamed, body)
+		}
+		if strings.Contains(body, "token too long") || strings.Contains(body, "Response timeout") {
+			t.Fatalf("stream=%t huge line misreported as timeout: %s", streamed, body)
+		}
+	}
+}
+
 func TestChatCompletionsAuth(t *testing.T) {
 	up := &stubUpstream{ndjson: chatNDJSON}
 	h := New(testConfig(), Deps{Upstream: up}, nil)

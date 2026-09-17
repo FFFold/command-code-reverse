@@ -47,6 +47,31 @@ func TestReaderEventSequence(t *testing.T) {
 	}
 }
 
+// TestReaderHandlesHugeLine guards against the bufio.Scanner 4 MiB token
+// cap: start-step echoes the entire forwarded request on one line, which
+// grows past the cap as a conversation lengthens.
+func TestReaderHandlesHugeLine(t *testing.T) {
+	huge := strings.Repeat("x", 5*1024*1024)
+	ndjson := `{"type":"start-step","request":{"body":{"padding":"` + huge + `"}}}` + "\n" +
+		`{"type":"text-delta","text":"Hi"}` + "\n"
+
+	r := NewReader(strings.NewReader(ndjson))
+	ev, err := r.Next()
+	if err != nil {
+		t.Fatalf("Next(first): %v", err)
+	}
+	if ev.Type != "start-step" {
+		t.Fatalf("Type = %q, want start-step", ev.Type)
+	}
+	ev, err = r.Next()
+	if err != nil {
+		t.Fatalf("Next(second): %v", err)
+	}
+	if ev.Type != "text-delta" || ev.Text != "Hi" {
+		t.Fatalf("ev = %+v", ev)
+	}
+}
+
 func TestReaderSkipsNoise(t *testing.T) {
 	r := NewReader(strings.NewReader("\n[DONE]\n: keepalive\nnot json\n{\"type\":\"text-delta\",\"text\":\"a\"}\n"))
 	ev, err := r.Next()
