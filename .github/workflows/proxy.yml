@@ -5,6 +5,7 @@ on:
     paths: ["proxy/**", ".github/workflows/proxy.yml"]
   pull_request:
     paths: ["proxy/**"]
+  workflow_dispatch:
 
 defaults:
   run:
