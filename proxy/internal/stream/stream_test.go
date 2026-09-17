@@ -95,7 +95,7 @@ func TestReaderFinalLineBeforeReadError(t *testing.T) {
 				t.Run(fmt.Sprintf("error=%v/size=%d/sameRead=%t", readErr, size, sameRead), func(t *testing.T) {
 					text := strings.Repeat("x", size)
 					line := `{"type":"text-delta","text":"` + text + `"}`
-					var input io.Reader = io.MultiReader(strings.NewReader(line), iotest.ErrReader(readErr))
+					input := io.MultiReader(strings.NewReader(line), iotest.ErrReader(readErr))
 					if sameRead {
 						input = iotest.DataErrReader(input)
 					}
