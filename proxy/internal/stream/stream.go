@@ -166,27 +166,31 @@ func (p *ProviderMetadata) CostUSD() float64 {
 
 // Reader incrementally decodes an NDJSON event stream.
 type Reader struct {
-	sc *bufio.Scanner
+	br *bufio.Reader
 }
 
-// NewReader wraps an upstream response body. The buffer is sized for
-// start-step events, which embed the full forwarded request.
+// NewReader wraps an upstream response body. bufio.Scanner is deliberately
+// avoided: it caps a single token at 4 MiB, and start-step events embed the
+// whole forwarded request on one line, which exceeds that cap as a
+// conversation grows.
 func NewReader(r io.Reader) *Reader {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	return &Reader{sc: sc}
+	return &Reader{br: bufio.NewReaderSize(r, 64*1024)}
 }
 
 // Next returns the next event, or io.EOF at clean stream end.
 // Blank lines and [DONE] sentinels are skipped.
 func (r *Reader) Next() (*Event, error) {
-	for r.sc.Scan() {
-		line := strings.TrimSpace(r.sc.Text())
+	for {
+		line, err := r.readLine()
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimSpace(line)
 		if line == "" || line == "[DONE]" || strings.HasPrefix(line, ":") {
 			continue
 		}
 		var ev Event
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		if json.Unmarshal([]byte(line), &ev) != nil {
 			continue // tolerate malformed lines
 		}
 		if ev.Type == "" {
@@ -195,10 +199,30 @@ func (r *Reader) Next() (*Event, error) {
 		ev.Raw = json.RawMessage(line)
 		return &ev, nil
 	}
-	if err := r.sc.Err(); err != nil {
-		return nil, err
+}
+
+// readLine returns the next newline-terminated line, without the delimiter.
+// Unlike bufio.Scanner it imposes no size limit on a single line.
+func (r *Reader) readLine() (string, error) {
+	var buf []byte
+	for {
+		chunk, err := r.br.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			buf = append(buf, chunk...)
+			continue
+		}
+		if err != nil {
+			if err == io.EOF {
+				if len(buf) == 0 && len(chunk) == 0 {
+					return "", io.EOF
+				}
+				// Final line without a trailing newline is valid NDJSON.
+				return string(append(buf, chunk...)), nil
+			}
+			return "", err
+		}
+		return string(append(buf, chunk...)), nil
 	}
-	return nil, io.EOF
 }
 
 // TerminalError inspects an event for the in-band terminal markers

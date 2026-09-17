@@ -11,7 +11,7 @@ defaults:
     working-directory: proxy
 
 env:
-  IMAGE: ghcr.io/rc-chn/command-code-reverse/commandcode-proxy
+  IMAGE: ghcr.io/fffold/command-code-reverse/commandcode-proxy
 
 jobs:
   test:
